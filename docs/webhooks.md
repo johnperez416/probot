@@ -1,5 +1,6 @@
 ---
 next: docs/github-api.md
+title: Receiving webhooks
 ---
 
 # Receiving webhooks
@@ -45,7 +46,7 @@ You can also use `app.onAny()` to listen for any event that your app is subscrib
 ```js
 module.exports = (app) => {
   app.onAny(async (context) => {
-    context.log.info({ event: context.name, action: context.payload.action });
+    app.log.info({ event: context.name, action: context.payload.action });
   });
 };
 ```

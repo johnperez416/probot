@@ -1,6 +1,6 @@
 import path from "path";
 
-import { EventPayloads, WebhookEvent } from "@octokit/webhooks";
+import { EmitterWebhookEvent as WebhookEvent } from "@octokit/webhooks";
 import merge from "deepmerge";
 
 import type { Logger } from "pino";
@@ -8,35 +8,41 @@ import type { Logger } from "pino";
 import { ProbotOctokit } from "./octokit/probot-octokit";
 import { aliasLog } from "./helpers/alias-log";
 import { DeprecatedLogger } from "./types";
-import { WebhookEvents } from "@octokit/webhooks";
+import { EmitterWebhookEventName as WebhookEvents } from "@octokit/webhooks/dist-types/types";
 
 export type MergeOptions = merge.Options;
 
-export interface WebhookPayloadWithRepository {
-  [key: string]: any;
-  repository?: EventPayloads.PayloadRepository;
-  issue?: {
-    [key: string]: any;
-    number: number;
-    html_url?: string;
-    body?: string;
-  };
-  pull_request?: {
-    [key: string]: any;
-    number: number;
-    html_url?: string;
-    body?: string;
-  };
-  sender?: {
-    [key: string]: any;
-    type: string;
-  };
-  action?: string;
-  installation?: {
-    id: number;
-    [key: string]: any;
-  };
-}
+/** Repo owner type, either string or never depending on the context */
+type RepoOwnerType<T extends WebhookEvents> =
+  WebhookEvent<T>["payload"] extends {
+    repository: { owner: { login: string } };
+  }
+    ? string
+    : never;
+
+/** Repo name type, either string or never depending on the context */
+type RepoNameType<T extends WebhookEvents> =
+  WebhookEvent<T>["payload"] extends { repository: { name: string } }
+    ? string
+    : never;
+
+/** Issue type (also pull request number), either number or never depending on the context */
+type RepoIssueNumberType<T extends WebhookEvents> =
+  WebhookEvent<T>["payload"] extends { issue: { number: number } }
+    ? number
+    : never | WebhookEvent<T>["payload"] extends {
+        pull_request: { number: number };
+      }
+    ? number
+    : never | WebhookEvent<T>["payload"] extends { number: number }
+    ? number
+    : never;
+
+/** Context.repo return type */
+type RepoResultType<E extends WebhookEvents> = {
+  owner: RepoOwnerType<E>;
+  repo: RepoNameType<E>;
+};
 
 /**
  * The context of the event that was triggered, including the payload and
@@ -54,11 +60,10 @@ export interface WebhookPayloadWithRepository {
  * @property {payload} payload - The webhook event payload
  * @property {log} log - A pino instance
  */
-export class Context<E extends WebhookPayloadWithRepository = any>
-  implements WebhookEvent<E> {
+export class Context<E extends WebhookEvents = WebhookEvents> {
   public name: WebhookEvents;
   public id: string;
-  public payload: E;
+  public payload: WebhookEvent<E>["payload"];
 
   public octokit: InstanceType<typeof ProbotOctokit>;
   public log: DeprecatedLogger;
@@ -88,7 +93,8 @@ export class Context<E extends WebhookPayloadWithRepository = any>
    * @param object - Params to be merged with the repo params.
    *
    */
-  public repo<T>(object?: T) {
+  public repo<T>(object?: T): RepoResultType<E> & T {
+    // @ts-ignore `repository` is not always present in this.payload
     const repo = this.payload.repository;
 
     if (!repo) {
@@ -99,7 +105,7 @@ export class Context<E extends WebhookPayloadWithRepository = any>
 
     return Object.assign(
       {
-        owner: repo.owner.login || repo.owner.name!,
+        owner: repo.owner.login,
         repo: repo.name,
       },
       object
@@ -118,11 +124,15 @@ export class Context<E extends WebhookPayloadWithRepository = any>
    *
    * @param object - Params to be merged with the issue params.
    */
-  public issue<T>(object?: T) {
-    const payload = this.payload;
+  public issue<T>(
+    object?: T
+  ): RepoResultType<E> & { issue_number: RepoIssueNumberType<E> } & T {
     return Object.assign(
       {
-        issue_number: (payload.issue || payload.pull_request || payload).number,
+        issue_number:
+          // @ts-ignore - this.payload may not have `issue` or `pull_request` keys
+          (this.payload.issue || this.payload.pull_request || this.payload)
+            .number,
       },
       this.repo(object)
     );
@@ -140,10 +150,13 @@ export class Context<E extends WebhookPayloadWithRepository = any>
    *
    * @param object - Params to be merged with the pull request params.
    */
-  public pullRequest<T>(object?: T) {
+  public pullRequest<T>(
+    object?: T
+  ): RepoResultType<E> & { pull_number: RepoIssueNumberType<E> } & T {
     const payload = this.payload;
     return Object.assign(
       {
+        // @ts-ignore - this.payload may not have `issue` or `pull_request` keys
         pull_number: (payload.issue || payload.pull_request || payload).number,
       },
       this.repo(object)
@@ -155,7 +168,9 @@ export class Context<E extends WebhookPayloadWithRepository = any>
    * @type {boolean}
    */
   get isBot() {
-    return this.payload.sender!.type === "Bot";
+    // @ts-expect-error - `sender` key is currently not present in all events
+    // see https://github.com/octokit/webhooks/issues/510
+    return this.payload.sender.type === "Bot";
   }
 
   /**

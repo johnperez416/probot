@@ -1,6 +1,6 @@
 import LRUCache from "lru-cache";
 import { Logger } from "pino";
-import { WebhookEvent } from "@octokit/webhooks";
+import { EmitterWebhookEvent as WebhookEvent } from "@octokit/webhooks";
 
 import { aliasLog } from "./helpers/alias-log";
 import { auth } from "./auth";
@@ -11,6 +11,7 @@ import { ProbotOctokit } from "./octokit/probot-octokit";
 import { VERSION } from "./version";
 import {
   ApplicationFunction,
+  ApplicationFunctionOptions,
   DeprecatedLogger,
   Options,
   ProbotWebhooks,
@@ -46,7 +47,6 @@ export class Probot {
   private state: State;
 
   constructor(options: Options = {}) {
-    options.webhookPath = options.webhookPath || "/";
     options.secret = options.secret || "development";
 
     let level = options.logLevel;
@@ -81,7 +81,6 @@ export class Probot {
       Octokit,
       octokit,
       webhooks: {
-        path: options.webhookPath,
         secret: options.secret,
       },
       appId: Number(options.appId),
@@ -94,18 +93,7 @@ export class Probot {
 
     this.webhooks = getWebhooks(this.state);
 
-    this.on = (eventNameOrNames, callback) => {
-      if (eventNameOrNames === "*") {
-        this.log.warn(
-          `[probot] Using the "*" event with the regular app.on() function is deprecated. Please use the app.webhooks.onAny() method instead`
-        );
-        // @ts-ignore this.webhooks.on("*") is deprecated
-        return this.webhooks.onAny(callback);
-      }
-
-      return this.webhooks.on(eventNameOrNames, callback);
-    };
-
+    this.on = this.webhooks.on;
     this.onAny = this.webhooks.onAny;
     this.onError = this.webhooks.onError;
 
@@ -117,7 +105,10 @@ export class Probot {
     return this.webhooks.receive(event);
   }
 
-  public async load(appFn: ApplicationFunction | ApplicationFunction[]) {
+  public async load(
+    appFn: ApplicationFunction | ApplicationFunction[],
+    options: ApplicationFunctionOptions = {}
+  ) {
     if (Array.isArray(appFn)) {
       for (const fn of appFn) {
         await this.load(fn);
@@ -125,6 +116,6 @@ export class Probot {
       return;
     }
 
-    return appFn(this, {});
+    return appFn(this, options);
   }
 }

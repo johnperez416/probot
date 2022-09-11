@@ -3,6 +3,7 @@ import { Server as HttpServer } from "http";
 import express, { Application, Router } from "express";
 import { join } from "path";
 import { Logger } from "pino";
+import { createNodeMiddleware as createWebhooksMiddleware } from "@octokit/webhooks";
 
 import { getLog } from "../helpers/get-log";
 import { getLoggingMiddleware } from "./logging-middleware";
@@ -10,6 +11,7 @@ import { createWebhookProxy } from "../helpers/webhook-proxy";
 import { VERSION } from "../version";
 import { ApplicationFunction, ServerOptions } from "../types";
 import { Probot } from "../";
+import { engine } from "express-handlebars";
 
 type State = {
   httpServer?: HttpServer;
@@ -49,10 +51,18 @@ export class Server {
     );
     this.expressApp.use(
       this.state.webhookPath,
-      this.probotApp.webhooks.middleware
+      createWebhooksMiddleware(this.probotApp.webhooks, {
+        path: "/",
+      })
     );
 
-    this.expressApp.set("view engine", "hbs");
+    this.expressApp.engine(
+      "handlebars",
+      engine({
+        defaultLayout: false,
+      })
+    );
+    this.expressApp.set("view engine", "handlebars");
     this.expressApp.set("views", join(__dirname, "..", "..", "views"));
     this.expressApp.get("/ping", (req, res) => res.end("PONG"));
   }
